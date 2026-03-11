@@ -1,514 +1,467 @@
 """
-OSINT FONTES PÚBLICAS PROFUNDO — RedNova
-Google Dorks · DuckDuckGo · Bing · LinkedIn · Facebook · Instagram
-Emails · Telefones · Vazamentos · Subdomínios · IPs · WHOIS
+REDNOVA OSINT PUBLICO v2 — Fontes completas
+BrasilAPI · registro.br · crt.sh · HIBP · LinkedIn · Instagram · Facebook · JusBrasil · Google
 """
-
-import re, json, socket, ssl, time, urllib.request, urllib.error
-import urllib.parse, subprocess
+import re, json, socket, ssl, time, urllib.request, urllib.error, urllib.parse, subprocess
 from datetime import datetime
 
-# ══════════════════════════════════════════════════════════════════
-#  SCRAPER BASE — faz requisição e retorna HTML
-# ══════════════════════════════════════════════════════════════════
-def _get(url: str, referer: str = None, timeout: int = 10) -> str:
+EMAIL_RE = re.compile(r'[a-zA-Z0-9._%+\-]{2,40}@[a-zA-Z0-9.\-]{2,40}\.[a-zA-Z]{2,6}')
+PHONE_RE = re.compile(r'(?:\+?55\s?)?(?:\(?\d{2}\)?\s?)(?:9\d{4}|\d{4})[\s\-]?\d{4}')
+LIXO = {"gmail.com","hotmail.com","yahoo.com","outlook.com","icloud.com",
+        "uol.com.br","bol.com.br","terra.com.br","ig.com.br","example.com",
+        "sentry.io","wixpress.com","noreply.com"}
+
+def _get(url, timeout=10):
     try:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
-        headers = {
-            "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                               "AppleWebKit/537.36 Chrome/122.0 Safari/537.36",
-            "Accept":          "text/html,application/xhtml+xml,*/*;q=0.9",
-            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-            "Accept-Encoding": "identity",
-        }
-        if referer:
-            headers["Referer"] = referer
-        req = urllib.request.Request(url, headers=headers)
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0",
+            "Accept": "text/html,application/xhtml+xml,*/*",
+            "Accept-Language": "pt-BR,pt;q=0.9",
+        })
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
             return r.read(131072).decode("utf-8", errors="ignore")
-    except Exception:
+    except:
         return ""
 
-EMAIL_RE = re.compile(
-    r'[a-zA-Z0-9._%+\-]{2,40}@[a-zA-Z0-9.\-]{2,40}\.[a-zA-Z]{2,6}'
-)
-PHONE_RE = re.compile(
-    r'(?:\+55\s?)?(?:\(?\d{2}\)?\s?)?(?:9\d{4}|\d{4})[\s\-]?\d{4}'
-)
+def _get_json(url, timeout=10):
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+            return json.loads(r.read())
+    except:
+        return None
 
-LIXO_EMAILS = {
-    "gmail.com","hotmail.com","yahoo.com","outlook.com","icloud.com",
-    "uol.com.br","bol.com.br","terra.com.br","ig.com.br","r7.com",
-    "example.com","test.com","sentry.io","wixpress.com",
+# ══════════════════════════════════════════════
+# CNPJ
+# ══════════════════════════════════════════════
+SITUACOES = {
+    "1": "NULA", "2": "ATIVA", "3": "SUSPENSA",
+    "4": "INAPTA", "8": "BAIXADA", "": "DESCONHECIDA"
 }
 
-def _limpar_emails(emails: list, dominio: str = None) -> list:
-    limpos = []
-    vistos = set()
-    for e in emails:
-        e = e.lower().strip().strip(".,;")
-        dom = e.split("@")[-1] if "@" in e else ""
-        if (e not in vistos
-                and len(e) > 6
-                and "." in dom
-                and not any(x in e for x in ["noreply","no-reply","pixel","track","@2x","@3x"])
-                and dom not in LIXO_EMAILS):
-            limpos.append(e)
-            vistos.add(e)
-    # Priorizar emails do domínio alvo
-    if dominio:
-        limpos.sort(key=lambda x: (0 if dominio in x else 1))
-    return limpos[:25]
+def _cnpj_dados(cnpj):
+    for url in [
+        f"https://brasilapi.com.br/api/cnpj/v1/{cnpj}",
+        f"https://receitaws.com.br/v1/cnpj/{cnpj}",
+    ]:
+        try:
+            data = _get_json(url)
+            if not data:
+                continue
+            sit_raw = str(data.get("situacao_cadastral") or data.get("situacao",""))
+            sit = SITUACOES.get(sit_raw, sit_raw) if sit_raw.isdigit() else sit_raw
+            return {
+                "razao_social":  data.get("razao_social") or data.get("nome",""),
+                "nome_fantasia": data.get("nome_fantasia") or data.get("fantasia",""),
+                "situacao":      sit,
+                "abertura":      data.get("data_inicio_atividade") or data.get("abertura",""),
+                "atividade":     (data.get("cnae_fiscal_descricao") or
+                                  (data.get("atividade_principal",[{}])[0].get("text",""))),
+                "logradouro":    data.get("logradouro",""),
+                "numero":        data.get("numero",""),
+                "municipio":     data.get("municipio",""),
+                "uf":            data.get("uf",""),
+                "cep":           data.get("cep",""),
+                "telefone":      data.get("telefone",""),
+                "email":         data.get("email",""),
+                "qsa":           data.get("qsa",[]),
+                "capital_social":data.get("capital_social",""),
+                "porte":         data.get("porte",""),
+            }
+        except:
+            time.sleep(1)
+    return {}
 
+def _extrair_dominio(empresa):
+    site = empresa.get("site","") or ""
+    if site:
+        d = re.sub(r'https?://','',site).strip("/").split("/")[0]
+        if "." in d: return d.lower()
+    email = empresa.get("email","") or ""
+    if "@" in email:
+        dom = email.split("@")[-1]
+        if dom and "." in dom and dom not in LIXO:
+            return dom.lower()
+    # Derivar do nome
+    nome = (empresa.get("nome_fantasia") or empresa.get("razao_social","")).lower()
+    nome_limpo = re.sub(r'[^a-z0-9]','', nome.split()[0]) if nome else ""
+    if nome_limpo and len(nome_limpo) > 3:
+        for tld in [".com.br",".com",".net",".org.br"]:
+            try:
+                socket.gethostbyname(f"{nome_limpo}{tld}")
+                return f"{nome_limpo}{tld}"
+            except: pass
+    return None
 
-# ══════════════════════════════════════════════════════════════════
-#  GOOGLE DORKS
-# ══════════════════════════════════════════════════════════════════
-def google_dork(query: str) -> str:
-    """Busca no Google via HTML público."""
-    q = urllib.parse.quote(query)
-    url = f"https://www.google.com/search?q={q}&num=20&hl=pt-BR"
-    html = _get(url)
-    if not html:
-        # Fallback DuckDuckGo
-        url = f"https://html.duckduckgo.com/html/?q={q}"
-        html = _get(url)
-    return html
+# ══════════════════════════════════════════════
+# REGISTRO.BR
+# ══════════════════════════════════════════════
+def _registro_br(dominio):
+    dados = {}
+    try:
+        result = subprocess.run(
+            ["whois", "-h", "whois.registro.br", dominio],
+            capture_output=True, text=True, timeout=12
+        )
+        txt = result.stdout
+        for line in txt.splitlines():
+            l = line.lower()
+            if "owner:" in l:
+                dados["owner"] = line.split(":",1)[-1].strip()
+            elif "owner-c:" in l:
+                dados["owner_c"] = line.split(":",1)[-1].strip()
+            elif "country:" in l:
+                dados["country"] = line.split(":",1)[-1].strip()
+            elif "created:" in l:
+                dados["created"] = line.split(":",1)[-1].strip()
+            elif "changed:" in l:
+                dados["changed"] = line.split(":",1)[-1].strip()
+            elif "phone:" in l:
+                dados.setdefault("phones",[]).append(line.split(":",1)[-1].strip())
+            elif "e-mail:" in l or "email:" in l:
+                dados.setdefault("emails",[]).append(line.split(":",1)[-1].strip())
+            elif "nic-hdl-br:" in l:
+                dados.setdefault("nic",[]).append(line.split(":",1)[-1].strip())
+        # API JSON do registro.br
+        api = _get_json(f"https://rdap.registro.br/domain/{dominio}")
+        if api:
+            for entity in api.get("entities",[]):
+                for role in entity.get("roles",[]):
+                    if role in ("registrant","administrative","technical"):
+                        vcard = entity.get("vcardArray",["",{}])
+                        if len(vcard) > 1:
+                            for item in vcard[1]:
+                                if item[0] == "fn":
+                                    dados.setdefault("contatos",[]).append(item[3])
+                                elif item[0] == "tel":
+                                    dados.setdefault("phones",[]).append(item[3])
+                                elif item[0] == "email":
+                                    dados.setdefault("emails",[]).append(item[3])
+    except: pass
+    return dados
 
-def dork_emails(dominio: str) -> list:
-    """Google dork para emails do domínio."""
-    emails = []
-    queries = [
-        f'site:{dominio} email',
-        f'"{dominio}" email contact',
-        f'intext:"@{dominio}"',
-        f'site:{dominio} "fale conosco"',
-        f'site:{dominio} "@{dominio}"',
-    ]
-    for q in queries[:3]:
-        html = google_dork(q)
-        found = EMAIL_RE.findall(html)
-        emails.extend(found)
-        time.sleep(1.5)
-    return emails
+# ══════════════════════════════════════════════
+# SUBDOMÍNIOS
+# ══════════════════════════════════════════════
+def _crt_subdomains(dominio):
+    try:
+        data = _get_json(f"https://crt.sh/?q=%.{dominio}&output=json")
+        if not data: return []
+        subs = set()
+        for e in data:
+            for name in e.get("name_value","").splitlines():
+                name = name.strip().lstrip("*.")
+                if dominio in name:
+                    subs.add(name.lower())
+        return sorted(subs)[:30]
+    except: return []
 
-def dork_redes(nome_empresa: str, dominio: str) -> dict:
-    """Google dork para redes sociais."""
-    redes = {}
-    nome_enc = urllib.parse.quote(f'"{nome_empresa}"')
-
-    buscas = {
-        "linkedin":  f'site:linkedin.com/company {nome_enc}',
-        "instagram": f'site:instagram.com {nome_enc}',
-        "facebook":  f'site:facebook.com {nome_enc}',
-        "youtube":   f'site:youtube.com {nome_enc}',
-    }
-
-    padroes = {
-        "linkedin":  r'linkedin\.com/company/([A-Za-z0-9\-_\.]{2,60})',
-        "instagram": r'instagram\.com/([A-Za-z0-9\._]{2,40})(?:/|\b)',
-        "facebook":  r'facebook\.com/(?:pages/[^/]+/)?([A-Za-z0-9\._\-]{2,80})',
-        "youtube":   r'youtube\.com/(?:channel/|user/|@|c/)([A-Za-z0-9\._\-]{2,80})',
-    }
-
-    bases = {
-        "linkedin":  "https://linkedin.com/company/",
-        "instagram": "https://instagram.com/",
-        "facebook":  "https://facebook.com/",
-        "youtube":   "https://youtube.com/@",
-    }
-
-    for rede, query in buscas.items():
-        html = google_dork(query)
-        m = re.search(padroes[rede], html, re.IGNORECASE)
-        if m:
-            handle = m.group(1).rstrip("/").split("?")[0]
-            # Filtrar handles genéricos
-            if handle.lower() not in ("login","sharer","share","watch","search",
-                                       "feed","home","jobs","pages"):
-                redes[rede] = bases[rede] + handle
-        time.sleep(1.2)
-
-    return redes
-
-
-# ══════════════════════════════════════════════════════════════════
-#  SCRAPING DIRETO DO SITE
-# ══════════════════════════════════════════════════════════════════
-def scrape_site(dominio: str) -> dict:
-    """Scraping profundo: emails, telefones, redes, WhatsApp."""
-    resultado = {"emails": [], "telefones": [], "redes": {}, "whatsapp": None}
-
-    urls_tentar = [
-        f"https://{dominio}",
-        f"https://www.{dominio}",
-        f"https://{dominio}/contato",
-        f"https://{dominio}/contact",
-        f"https://{dominio}/sobre",
-        f"https://{dominio}/about",
-        f"https://{dominio}/fale-conosco",
-        f"https://{dominio}/quem-somos",
-    ]
-
-    todo_html = ""
-    for url in urls_tentar[:5]:
-        html = _get(url)
-        if html:
-            todo_html += html
+# ══════════════════════════════════════════════
+# SCRAPING DO SITE
+# ══════════════════════════════════════════════
+def _scrape_site(dominio):
+    res = {"emails":[], "phones":[], "redes":{}}
+    urls = [f"https://{dominio}", f"https://www.{dominio}",
+            f"https://{dominio}/contato", f"https://{dominio}/sobre"]
+    html_total = ""
+    for url in urls[:4]:
+        h = _get(url)
+        if h:
+            html_total += h
             time.sleep(0.5)
-
-    if not todo_html:
-        return resultado
-
-    # Emails
-    resultado["emails"] = EMAIL_RE.findall(todo_html)
-
-    # Telefones
-    fones = PHONE_RE.findall(todo_html)
-    resultado["telefones"] = list(set(fones))[:8]
-
+    if not html_total:
+        return res
+    res["emails"] = list(set(EMAIL_RE.findall(html_total)))
+    res["phones"] = list(set(PHONE_RE.findall(html_total)))[:8]
     # WhatsApp
-    wa = re.search(r'(?:wa\.me|api\.whatsapp\.com/send\?phone=)([0-9]{10,15})', todo_html)
+    wa = re.search(r'(?:wa\.me|whatsapp\.com/send\?phone=)([0-9]{10,15})', html_total)
     if wa:
-        resultado["whatsapp"] = f"https://wa.me/{wa.group(1)}"
-
-    # Redes no HTML do site
-    padroes_redes = {
-        "facebook":  r'(?:facebook\.com/)([A-Za-z0-9\./_\-]{2,80})',
-        "instagram": r'(?:instagram\.com/)([A-Za-z0-9\._]{2,40})',
-        "linkedin":  r'(?:linkedin\.com/(?:company|in)/)([A-Za-z0-9\._\-]{2,60})',
-        "twitter":   r'(?:twitter\.com|x\.com)/([A-Za-z0-9_]{2,40})',
-        "youtube":   r'youtube\.com/(?:channel/|user/|@|c/)([A-Za-z0-9\._\-]{2,80})',
+        res["redes"]["whatsapp"] = f"https://wa.me/{wa.group(1)}"
+    # Redes
+    pats = {
+        "facebook":  r'facebook\.com/(?!sharer|share|dialog|login|legal|privacy)([A-Za-z0-9\./_\-]{2,60})',
+        "instagram": r'instagram\.com/([A-Za-z0-9\._]{2,40})(?:/|\b)',
+        "linkedin":  r'linkedin\.com/(?:company|in)/([A-Za-z0-9\._\-]{2,60})',
+        "youtube":   r'youtube\.com/(?:@|channel/|user/|c/)([A-Za-z0-9\._\-]{2,60})',
         "tiktok":    r'tiktok\.com/@([A-Za-z0-9\._]{2,40})',
-        "telegram":  r't\.me/([A-Za-z0-9_]{2,40})',
+        "twitter":   r'(?:twitter|x)\.com/([A-Za-z0-9_]{2,40})',
     }
-    links_base = {
-        "facebook":  "https://facebook.com/",
-        "instagram": "https://instagram.com/",
-        "linkedin":  "https://linkedin.com/company/",
-        "twitter":   "https://twitter.com/",
-        "youtube":   "https://youtube.com/@",
-        "tiktok":    "https://tiktok.com/@",
-        "telegram":  "https://t.me/",
+    bases = {
+        "facebook":"https://facebook.com/","instagram":"https://instagram.com/",
+        "linkedin":"https://linkedin.com/company/","youtube":"https://youtube.com/@",
+        "tiktok":"https://tiktok.com/@","twitter":"https://twitter.com/",
     }
-    ignorar = {"login","sharer","share","dialog","oauth","plugins",
-               "legal","privacy","terms","help","support","ads"}
-
-    for rede, pat in padroes_redes.items():
-        m = re.search(pat, todo_html, re.IGNORECASE)
+    ignorar = {"login","sharer","share","watch","home","feed","legal","privacy","terms","ads","help"}
+    for rede, pat in pats.items():
+        m = re.search(pat, html_total, re.IGNORECASE)
         if m:
             handle = m.group(1).rstrip("/").split("?")[0].split("#")[0]
             if handle.lower() not in ignorar and len(handle) > 1:
-                resultado["redes"][rede] = links_base[rede] + handle
+                res["redes"][rede] = bases[rede] + handle
+    return res
 
-    return resultado
+# ══════════════════════════════════════════════
+# GOOGLE/DUCKDUCKGO DORK
+# ══════════════════════════════════════════════
+def _dork(query):
+    q = urllib.parse.quote(query)
+    for url in [
+        f"https://html.duckduckgo.com/html/?q={q}",
+        f"https://www.bing.com/search?q={q}",
+    ]:
+        h = _get(url)
+        if h and len(h) > 500:
+            return h
+    return ""
 
-
-# ══════════════════════════════════════════════════════════════════
-#  LINKEDIN PÚBLICO
-# ══════════════════════════════════════════════════════════════════
-def linkedin_empresa(nome: str) -> dict:
-    """Busca página pública da empresa no LinkedIn."""
-    resultado = {"url": None, "funcionarios": None, "setor": None}
-    try:
-        query = urllib.parse.quote(f"{nome} empresa")
-        url = f"https://www.linkedin.com/search/results/companies/?keywords={query}"
-        html = _get(url)
-        m = re.search(r'linkedin\.com/company/([A-Za-z0-9\-_\.]{2,60})', html)
+def _dork_redes(nome, dominio=""):
+    redes = {}
+    buscas = {
+        "linkedin":  f'"{nome}" site:linkedin.com/company',
+        "instagram": f'"{nome}" site:instagram.com',
+        "facebook":  f'"{nome}" site:facebook.com',
+    }
+    pats = {
+        "linkedin":  r'linkedin\.com/company/([A-Za-z0-9\-_\.]{2,60})',
+        "instagram": r'instagram\.com/([A-Za-z0-9\._]{2,40})',
+        "facebook":  r'facebook\.com/([A-Za-z0-9\._/\-]{2,80})',
+    }
+    bases = {
+        "linkedin":"https://linkedin.com/company/",
+        "instagram":"https://instagram.com/",
+        "facebook":"https://facebook.com/",
+    }
+    ignorar = {"login","sharer","share","watch","home","feed","pages","groups","events"}
+    for rede, query in buscas.items():
+        html = _dork(query)
+        m = re.search(pats[rede], html, re.IGNORECASE)
         if m:
-            slug = m.group(1)
-            resultado["url"] = f"https://linkedin.com/company/{slug}"
-    except Exception:
-        pass
+            handle = m.group(1).rstrip("/").split("?")[0]
+            if handle.lower() not in ignorar:
+                redes[rede] = bases[rede] + handle
+        time.sleep(1)
+    return redes
+
+def _dork_pessoa(nome):
+    """Busca pessoa por nome — JusBrasil, LinkedIn, emprego."""
+    resultado = {}
+    # JusBrasil
+    html = _dork(f'"{nome}" site:jusbrasil.com.br')
+    m = re.search(r'jusbrasil\.com\.br/(?:artigos|noticias|jurisprudencia|diarios)/[^\s"<>]{5,80}', html)
+    if m:
+        resultado["jusbrasil"] = f"https://{m.group(0)}"
+    # LinkedIn pessoal
+    html2 = _dork(f'"{nome}" site:linkedin.com/in')
+    m2 = re.search(r'linkedin\.com/in/([A-Za-z0-9\-_\.]{2,60})', html2)
+    if m2:
+        resultado["linkedin_pessoal"] = f"https://linkedin.com/in/{m2.group(1)}"
+    # Empregos
+    html3 = _dork(f'"{nome}" currículo OR emprego OR trabalha')
+    if nome.lower() in html3.lower():
+        resultado["mencoes_emprego"] = "Encontradas menções públicas"
     return resultado
 
-
-# ══════════════════════════════════════════════════════════════════
-#  INSTAGRAM PÚBLICO
-# ══════════════════════════════════════════════════════════════════
-def instagram_perfil(handle: str) -> dict:
-    """Dados públicos do perfil Instagram."""
-    dados = {"seguidores": None, "bio": None, "posts": None, "url": None}
+# ══════════════════════════════════════════════
+# INSTAGRAM PÚBLICO
+# ══════════════════════════════════════════════
+def _instagram_info(handle):
+    dados = {}
     try:
-        url = f"https://www.instagram.com/{handle}/"
+        url = f"https://www.instagram.com/{handle}/?__a=1&__d=dis"
         html = _get(url)
-        # Seguidores
         m = re.search(r'"edge_followed_by":\{"count":(\d+)\}', html)
-        if m:
-            dados["seguidores"] = int(m.group(1))
-        # Bio
-        m = re.search(r'"biography":"([^"]{0,300})"', html)
-        if m:
-            dados["bio"] = m.group(1)
-        # Posts
-        m = re.search(r'"edge_owner_to_timeline_media":\{"count":(\d+)', html)
-        if m:
-            dados["posts"] = int(m.group(1))
-        dados["url"] = url
-    except Exception:
-        pass
+        if m: dados["seguidores"] = f"{int(m.group(1)):,}".replace(",",".")
+        m2 = re.search(r'"biography":"([^"]{0,200})"', html)
+        if m2: dados["bio"] = m2.group(1)
+        m3 = re.search(r'"full_name":"([^"]{0,80})"', html)
+        if m3: dados["nome"] = m3.group(1)
+    except: pass
     return dados
 
-
-# ══════════════════════════════════════════════════════════════════
-#  FACEBOOK PÚBLICO
-# ══════════════════════════════════════════════════════════════════
-def facebook_pagina(handle: str) -> dict:
-    """Dados públicos da página Facebook."""
-    dados = {"curtidas": None, "url": None, "telefone": None, "email": None}
-    try:
-        url = f"https://www.facebook.com/{handle}"
-        html = _get(url)
-        # Curtidas/seguidores
-        m = re.search(r'([\d,\.]+)\s+(?:curtidas|likes|seguidores|followers)', html, re.IGNORECASE)
-        if m:
-            dados["curtidas"] = m.group(1)
-        # Email na página
-        emails = EMAIL_RE.findall(html)
-        if emails:
-            dados["email"] = emails[0]
-        # Telefone
-        fones = PHONE_RE.findall(html)
-        if fones:
-            dados["telefone"] = fones[0]
-        dados["url"] = url
-    except Exception:
-        pass
-    return dados
-
-
-# ══════════════════════════════════════════════════════════════════
-#  EMAILS VIA PADRÕES DOS SÓCIOS
-# ══════════════════════════════════════════════════════════════════
-def emails_socios(socios: list, dominio: str) -> list:
-    if not dominio or not socios:
-        return []
-    emails = []
-    for s in socios[:6]:
-        nome = s.get("nome_socio") or s.get("nome","")
-        if not nome:
-            continue
-        partes = [re.sub(r'[^a-z]','', p) for p in nome.lower().split() if len(p) > 1]
-        partes = [p for p in partes if p not in ('de','da','do','dos','das','e','a')]
-        if len(partes) < 2:
-            continue
-        p, u = partes[0], partes[-1]
-        for padrao in [
-            f"{p}.{u}@{dominio}",
-            f"{p[0]}{u}@{dominio}",
-            f"{p}@{dominio}",
-            f"{p}{u[0]}@{dominio}",
-            f"{u}.{p}@{dominio}",
-        ]:
-            emails.append(padrao)
-    return emails[:20]
-
-
-# ══════════════════════════════════════════════════════════════════
-#  VAZAMENTOS PÚBLICOS
-# ══════════════════════════════════════════════════════════════════
-def verificar_vazamentos(dominio: str) -> list:
+# ══════════════════════════════════════════════
+# HIBP VAZAMENTOS
+# ══════════════════════════════════════════════
+def _hibp(dominio):
     vazamentos = []
-    # DeHashed public search (sem key)
     try:
-        url = f"https://haveibeenpwned.com/api/v3/breaches"
-        req = urllib.request.Request(url, headers={"User-Agent":"RedNova-OSINT"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            todos = json.loads(r.read())
-        for b in todos:
-            if dominio.split(".")[0].lower() in b.get("Domain","").lower():
-                vazamentos.append({
-                    "nome":  b.get("Name"),
-                    "data":  b.get("BreachDate"),
-                    "contas": b.get("PwnCount",0),
-                    "dados": ", ".join(b.get("DataClasses",[])[:4]),
-                })
-    except Exception:
-        pass
+        # Buscar na lista pública de breaches e filtrar pelo domínio
+        data = _get_json("https://haveibeenpwned.com/api/v3/breaches")
+        if data:
+            nome_base = dominio.split(".")[0].lower()
+            for b in data:
+                bd = b.get("Domain","").lower()
+                bn = b.get("Name","").lower()
+                if nome_base in bd or nome_base in bn:
+                    vazamentos.append({
+                        "nome":   b.get("Name","?"),
+                        "data":   b.get("BreachDate","?"),
+                        "contas": b.get("PwnCount",0),
+                        "dados":  ", ".join(b.get("DataClasses",[])[:4]),
+                    })
+    except: pass
     return vazamentos[:5]
 
+# ══════════════════════════════════════════════
+# EMAILS DOS SÓCIOS
+# ══════════════════════════════════════════════
+def _emails_socios(socios, dominio):
+    if not dominio or not socios: return []
+    emails = []
+    for s in socios[:5]:
+        nome = s.get("nome_socio") or s.get("nome","")
+        if not nome: continue
+        partes = [re.sub(r'[^a-z]','',p) for p in nome.lower().split()
+                  if len(p)>1 and p not in ('de','da','do','dos','das','e','a')]
+        if len(partes) < 2: continue
+        p, u = partes[0], partes[-1]
+        for pad in [f"{p}.{u}@{dominio}", f"{p[0]}{u}@{dominio}",
+                    f"{p}@{dominio}", f"{u}.{p}@{dominio}"]:
+            emails.append(pad)
+    return emails[:12]
 
-# ══════════════════════════════════════════════════════════════════
-#  DNS PROFUNDO
-# ══════════════════════════════════════════════════════════════════
-def dns_profundo(dominio: str) -> dict:
-    resultado = {"registros": {}, "ip_real": None, "spf": [], "mx": []}
+# ══════════════════════════════════════════════
+# CRUZAR TELEFONE COM CNPJ
+# ══════════════════════════════════════════════
+def _cruzar_telefone(telefone, empresa):
+    """Tenta identificar titular do telefone via dados do CNPJ."""
+    if not telefone or not empresa: return None
+    tel_limpo = re.sub(r'\D','',telefone)
+    tel_empresa = re.sub(r'\D','', empresa.get("telefone",""))
+    if tel_limpo and tel_empresa and tel_limpo[-8:] == tel_empresa[-8:]:
+        nome = empresa.get("razao_social","")
+        socios = empresa.get("qsa",[])
+        titular = socios[0].get("nome_socio","") if socios else nome
+        return f"⚠️ *Provável titular:* {titular} (cruzado com CNPJ)"
+    return None
 
-    for rt in ["A","AAAA","MX","NS","TXT","CNAME","SOA"]:
-        try:
-            r = subprocess.run(
-                ["dig","+short", rt, dominio],
-                capture_output=True, text=True, timeout=8
-            )
-            vals = [v.strip() for v in r.stdout.splitlines() if v.strip()]
-            if vals:
-                resultado["registros"][rt] = vals
-
-                if rt == "MX":
-                    resultado["mx"] = vals
-                elif rt == "TXT":
-                    for v in vals:
-                        if "spf" in v.lower() or "ip4:" in v.lower():
-                            resultado["spf"].append(v)
-                            # Extrair IPs do SPF
-                            ips = re.findall(r'ip4:(\d+\.\d+\.\d+\.\d+)', v)
-                            if ips:
-                                resultado["ip_real"] = ips[0]
-        except Exception:
-            pass
-
-    # Se não achou IP real via SPF, tentar via MX
-    if not resultado["ip_real"] and resultado["mx"]:
-        for mx in resultado["mx"]:
-            partes = mx.split()
-            host = partes[-1].rstrip(".") if partes else ""
-            if host:
-                try:
-                    ip = socket.gethostbyname(host)
-                    resultado["ip_real"] = ip
-                    break
-                except Exception:
-                    pass
-
-    return resultado
-
-
-# ══════════════════════════════════════════════════════════════════
-#  ENTRY POINT COMPLETO
-# ══════════════════════════════════════════════════════════════════
-def osint_completo(cnpj_raw: str = None, dominio_raw: str = None,
-                   nome_raw: str = None) -> str:
-    """
-    Aceita CNPJ, domínio ou nome de empresa.
-    Cruza tudo e retorna relatório completo.
-    """
-    from osint_cnpj import consultar as _cnpj_api, limpar_cnpj
-
+# ══════════════════════════════════════════════
+# ENTRY POINT PRINCIPAL
+# ══════════════════════════════════════════════
+def osint_completo(cnpj_raw=None, dominio_raw=None, nome_raw=None):
     dados = {
-        "cnpj":       None,
-        "empresa":    {},
-        "socios":     [],
-        "dominio":    None,
-        "dns":        {},
-        "subdominios":[],
-        "ips":        [],
-        "emails":     [],
-        "telefones":  [],
-        "redes":      {},
-        "instagram":  {},
-        "facebook":   {},
-        "linkedin":   {},
-        "vazamentos": [],
+        "cnpj": None, "empresa": {}, "socios": [],
+        "dominio": None, "registro_br": {},
+        "subdominios": [], "ips": [],
+        "emails": [], "phones": [],
+        "redes": {}, "instagram": {},
+        "pessoa": {}, "vazamentos": [],
     }
 
-    # ── Pegar dados empresa via CNPJ ─────────────────────────────
+    # 1. CNPJ
     if cnpj_raw:
-        from osint_cruzamento import _cnpj_dados, _extrair_dominio
-        cnpj = limpar_cnpj(cnpj_raw)
+        cnpj = re.sub(r'\D','',cnpj_raw)
         dados["cnpj"] = cnpj
         empresa = _cnpj_dados(cnpj)
         dados["empresa"] = empresa
         dados["socios"]  = empresa.get("qsa",[])
-        dominio = dominio_raw or _extrair_dominio(empresa)
-        dados["dominio"] = dominio
         if empresa.get("email"):
             dados["emails"].append(empresa["email"])
         if empresa.get("telefone"):
-            dados["telefones"].append(empresa["telefone"])
-
+            dados["phones"].append(empresa["telefone"])
+        dominio = dominio_raw or _extrair_dominio(empresa)
+        dados["dominio"] = dominio
     elif dominio_raw:
-        dados["dominio"] = dominio_raw.replace("https://","").replace("http://","").strip("/")
+        dominio = dominio_raw.replace("https://","").replace("http://","").strip("/").lower()
+        dados["dominio"] = dominio
+    else:
+        dominio = None
 
     nome_empresa = (dados["empresa"].get("nome_fantasia") or
-                    dados["empresa"].get("razao_social") or
-                    nome_raw or "")
+                    dados["empresa"].get("razao_social") or nome_raw or "")
 
-    dominio = dados["dominio"]
-
-    # ── DNS profundo ─────────────────────────────────────────────
+    # 2. Registro.br + WHOIS
     if dominio:
-        print(f"  [DNS] {dominio}")
-        dados["dns"] = dns_profundo(dominio)
+        dados["registro_br"] = _registro_br(dominio)
+        # Pegar emails/phones do whois
+        for e in dados["registro_br"].get("emails",[]):
+            dados["emails"].append(e)
+        for p in dados["registro_br"].get("phones",[]):
+            dados["phones"].append(p)
 
-        # ── Subdomínios ──────────────────────────────────────────
-        print(f"  [CRT] subdomínios...")
-        from osint_cruzamento import _crt_subdomains, _resolver_ips
+    # 3. Subdomínios
+    if dominio:
         dados["subdominios"] = _crt_subdomains(dominio)
-        dados["ips"]         = _resolver_ips(dominio, dados["subdominios"])
+        # IPs
+        for host in [dominio] + dados["subdominios"][:5]:
+            try:
+                ip = socket.gethostbyname(host)
+                dados["ips"].append({"host":host,"ip":ip})
+            except: pass
 
-        # ── Scraping profundo do site ────────────────────────────
-        print(f"  [SITE] scraping...")
-        site_data = scrape_site(dominio)
-        dados["emails"]    += site_data["emails"]
-        dados["telefones"] += site_data["telefones"]
-        dados["redes"].update(site_data["redes"])
-        if site_data.get("whatsapp"):
-            dados["redes"]["whatsapp"] = site_data["whatsapp"]
+    # 4. Scraping do site
+    if dominio:
+        site = _scrape_site(dominio)
+        dados["emails"]  += site["emails"]
+        dados["phones"]  += site["phones"]
+        dados["redes"].update(site["redes"])
 
-        # ── Google dorks ─────────────────────────────────────────
-        print(f"  [DORK] emails...")
-        dados["emails"] += dork_emails(dominio)
-
-        # ── Vazamentos ───────────────────────────────────────────
-        print(f"  [HIBP] vazamentos...")
-        dados["vazamentos"] = verificar_vazamentos(dominio)
-
-    # ── Redes via Google dork ─────────────────────────────────────
+    # 5. Redes via dork
     if nome_empresa:
-        print(f"  [REDES] {nome_empresa}...")
-        redes_dork = dork_redes(nome_empresa, dominio or "")
-        for k, v in redes_dork.items():
+        redes_dork = _dork_redes(nome_empresa, dominio or "")
+        for k,v in redes_dork.items():
             if k not in dados["redes"]:
                 dados["redes"][k] = v
 
-    # ── Detalhes Instagram ────────────────────────────────────────
+    # 6. Instagram info
     if "instagram" in dados["redes"]:
         handle = dados["redes"]["instagram"].split("instagram.com/")[-1].rstrip("/")
-        print(f"  [IG] @{handle}...")
-        dados["instagram"] = instagram_perfil(handle)
+        ig = _instagram_info(handle)
+        if ig: dados["instagram"] = ig
 
-    # ── Detalhes Facebook ─────────────────────────────────────────
-    if "facebook" in dados["redes"]:
-        handle = dados["redes"]["facebook"].split("facebook.com/")[-1].rstrip("/")
-        print(f"  [FB] {handle}...")
-        fb = facebook_pagina(handle)
-        dados["facebook"] = fb
-        if fb.get("email"):
-            dados["emails"].append(fb["email"])
-        if fb.get("telefone"):
-            dados["telefones"].append(fb["telefone"])
-
-    # ── Emails dos sócios ─────────────────────────────────────────
+    # 7. Emails dos sócios
     if dominio and dados["socios"]:
-        dados["emails"] += emails_socios(dados["socios"], dominio)
+        dados["emails"] += _emails_socios(dados["socios"], dominio)
 
-    # ── Limpar e deduplicar ───────────────────────────────────────
-    dados["emails"]    = _limpar_emails(dados["emails"], dominio)
-    dados["telefones"] = list(dict.fromkeys(dados["telefones"]))[:8]
+    # 8. Busca pessoa (sócios)
+    if dados["socios"]:
+        socio_principal = (dados["socios"][0].get("nome_socio") or
+                           dados["socios"][0].get("nome",""))
+        if socio_principal:
+            dados["pessoa"] = _dork_pessoa(socio_principal)
 
-    return _formatar_completo(dados)
+    # 9. Vazamentos
+    if dominio:
+        dados["vazamentos"] = _hibp(dominio)
 
+    # 10. Limpar
+    emails_vistos = set()
+    emails_limpos = []
+    for e in dados["emails"]:
+        e = e.lower().strip().strip(".,;")
+        dom_e = e.split("@")[-1] if "@" in e else ""
+        if (e not in emails_vistos and len(e) > 6 and "." in dom_e
+                and dom_e not in LIXO
+                and not any(x in e for x in ["noreply","no-reply","pixel","@2x","@3x"])):
+            emails_limpos.append(e)
+            emails_vistos.add(e)
+    dados["emails"] = emails_limpos[:20]
+    dados["phones"] = list(dict.fromkeys(p.strip() for p in dados["phones"] if p.strip()))[:8]
 
-# ══════════════════════════════════════════════════════════════════
-#  FORMATAÇÃO FINAL
-# ══════════════════════════════════════════════════════════════════
-def _formatar_completo(d: dict) -> str:
+    return _formatar(dados)
+
+# ══════════════════════════════════════════════
+# FORMATAÇÃO
+# ══════════════════════════════════════════════
+def _formatar(d):
     agora = datetime.now().strftime('%d/%m/%Y %H:%M')
     e = d.get("empresa",{})
     cnpj = d.get("cnpj","")
     cnpj_fmt = (f"`{cnpj[:2]}.{cnpj[2:5]}.{cnpj[5:8]}/{cnpj[8:12]}-{cnpj[12:]}`"
                 if cnpj and len(cnpj)==14 else "—")
-
     sit = e.get("situacao","")
-    sit_icon = "✅" if "ATIVA" in str(sit).upper() else ("⚠️" if sit else "")
-    out = []
+    sit_icon = {"ATIVA":"✅","BAIXADA":"🔴","SUSPENSA":"⚠️","INAPTA":"❌"}.get(sit,"⚠️")
+    out = ["🔴 *REDNOVA — OSINT COMPLETO*", f"_{agora}_"]
 
-    out.append("🔴 *REDNOVA — OSINT COMPLETO*")
-    out.append(f"_{agora}_")
-
-    # ── Empresa ──────────────────────────────────────────────────
+    # Empresa
     if e:
         out.append("\n━━━━ 🏢 EMPRESA ━━━━")
         out.append(f"*CNPJ:* {cnpj_fmt}")
@@ -518,105 +471,104 @@ def _formatar_completo(d: dict) -> str:
         if sit:
             out.append(f"*Situação:* {sit_icon} {sit}")
         out.append(f"*Abertura:* {e.get('abertura','?')}")
-        out.append(f"*Atividade:* {str(e.get('atividade','?'))[:70]}")
+        out.append(f"*Atividade:* {str(e.get('atividade',''))[:70]}")
         out.append(f"*Porte:* {e.get('porte','?')} | *Capital:* R$ {e.get('capital_social','?')}")
         end = f"{e.get('logradouro','')} {e.get('numero','')}, {e.get('municipio','')} - {e.get('uf','')}".strip(", ")
         if end.strip():
             out.append(f"*Endereço:* {end}")
 
-    # ── Sócios ───────────────────────────────────────────────────
+    # Sócios
     socios = d.get("socios",[])
     if socios:
         out.append("\n━━━━ 👥 SÓCIOS ━━━━")
-        for s in socios[:6]:
+        for s in socios[:5]:
             nome = s.get("nome_socio") or s.get("nome","?")
             qual = s.get("qualificacao_socio") or s.get("qual","")
             out.append(f"• {nome} _{qual}_")
 
-    # ── Domínio / DNS / IPs ───────────────────────────────────────
+    # Domínio
     dom = d.get("dominio")
     if dom:
         out.append(f"\n━━━━ 🌐 DOMÍNIO: `{dom}` ━━━━")
-        dns = d.get("dns",{})
-        reg = dns.get("registros",{})
-        if reg.get("A"):
-            out.append(f"*IP:* `{'` | `'.join(reg['A'][:3])}`")
-        if reg.get("NS"):
-            out.append(f"*NS:* {' | '.join(reg['NS'][:3])}")
-        if reg.get("MX"):
-            out.append(f"*MX:* {' | '.join(reg['MX'][:2])}")
-        if dns.get("ip_real"):
-            out.append(f"⚠️ *IP REAL (bypass CDN):* `{dns['ip_real']}`")
+        reg = d.get("registro_br",{})
+        if reg.get("owner"):
+            out.append(f"*Dono (registro.br):* {reg['owner']}")
+        if reg.get("contatos"):
+            out.append(f"*Contatos:* {' | '.join(reg['contatos'][:3])}")
+        if reg.get("created"):
+            out.append(f"*Criado:* {reg['created']}")
+        ips_unicos = list({x["ip"]: x for x in d.get("ips",[])}.values())
+        if ips_unicos:
+            ips_txt = " | ".join("`" + x["ip"] + "`" for x in ips_unicos[:3])
+            out.append(f"*IPs:* {ips_txt}")
         subs = d.get("subdominios",[])
         if subs:
             out.append(f"*Subdomínios ({len(subs)}):* " +
-                       " | ".join(f"`{s}`" for s in subs[:6]) +
-                       (f" _+{len(subs)-6} mais_" if len(subs)>6 else ""))
+                       " | ".join(f"`{s}`" for s in subs[:5]) +
+                       (f" _+{len(subs)-5} mais_" if len(subs)>5 else ""))
 
-    # ── Emails ───────────────────────────────────────────────────
+    # Emails
     emails = d.get("emails",[])
+    out.append(f"\n━━━━ 📧 EMAILS ({len(emails)}) ━━━━")
     if emails:
-        out.append(f"\n━━━━ 📧 EMAILS ({len(emails)}) ━━━━")
-        # Separar corporativos e externos
-        corp = [e for e in emails if dom and dom in e]
-        ext  = [e for e in emails if e not in corp]
+        corp = [x for x in emails if dom and dom in x]
+        ext  = [x for x in emails if x not in corp]
         if corp:
             out.append("*Corporativos:*")
-            for em in corp[:8]:
-                out.append(f"  `{em}`")
+            for em in corp[:6]: out.append(f"  `{em}`")
         if ext:
-            out.append("*Outros / Padrões:*")
-            for em in ext[:6]:
-                out.append(f"  `{em}`")
+            out.append("*Outros / Prováveis:*")
+            for em in ext[:6]: out.append(f"  `{em}`")
     else:
-        out.append("\n📧 *Emails:* Nenhum encontrado")
+        out.append("  Nenhum encontrado")
 
-    # ── Telefones ────────────────────────────────────────────────
-    fones = d.get("telefones",[])
-    if fones:
+    # Telefones
+    phones = d.get("phones",[])
+    if phones:
         out.append(f"\n━━━━ 📞 TELEFONES ━━━━")
-        for f in fones[:5]:
-            out.append(f"  `{f}`")
+        for p in phones[:5]:
+            cruzamento = _cruzar_telefone(p, d.get("empresa",{}))
+            out.append(f"  `{p}`")
+            if cruzamento:
+                out.append(f"  {cruzamento}")
 
-    # ── Redes Sociais ─────────────────────────────────────────────
+    # Redes
     redes = d.get("redes",{})
-    icons = {
-        "facebook":"🔵","instagram":"📸","linkedin":"💼",
-        "twitter":"🐦","youtube":"▶️","whatsapp":"💬",
-        "tiktok":"🎵","telegram":"✈️"
-    }
+    icons = {"facebook":"🔵","instagram":"📸","linkedin":"💼","twitter":"🐦",
+             "youtube":"▶️","whatsapp":"💬","tiktok":"🎵","telegram":"✈️"}
     if redes:
         out.append(f"\n━━━━ 📱 REDES SOCIAIS ━━━━")
         for rede, url in redes.items():
             out.append(f"{icons.get(rede,'•')} [{rede.capitalize()}]({url})")
-
-        # Detalhes Instagram
         ig = d.get("instagram",{})
         if ig.get("seguidores"):
-            seg = f"{ig['seguidores']:,}".replace(",",".")
-            out.append(f"\n  📸 *Instagram:* {seg} seguidores"
-                       + (f" · {ig['posts']} posts" if ig.get('posts') else ""))
+            out.append(f"  📊 Seguidores: {ig['seguidores']}"
+                       + (f" · {ig.get('posts','')} posts" if ig.get("posts") else ""))
             if ig.get("bio"):
-                bio = ig['bio'][:100]
-                out.append(f"  Bio: _{bio}_")
+                out.append(f"  Bio: _{ig['bio'][:100]}_")
 
-        # Detalhes Facebook
-        fb = d.get("facebook",{})
-        if fb.get("curtidas"):
-            out.append(f"  🔵 *Facebook:* {fb['curtidas']} curtidas/seguidores")
+    # Pessoa / Sócio
+    pessoa = d.get("pessoa",{})
+    if pessoa:
+        out.append(f"\n━━━━ 🔍 SÓCIO PRINCIPAL ━━━━")
+        if pessoa.get("linkedin_pessoal"):
+            out.append(f"💼 [LinkedIn]({pessoa['linkedin_pessoal']})")
+        if pessoa.get("jusbrasil"):
+            out.append(f"⚖️ [JusBrasil]({pessoa['jusbrasil']})")
+        if pessoa.get("mencoes_emprego"):
+            out.append(f"💼 {pessoa['mencoes_emprego']}")
 
-    # ── Vazamentos ───────────────────────────────────────────────
+    # Vazamentos
     vaz = d.get("vazamentos",[])
     out.append(f"\n━━━━ ⚠️ VAZAMENTOS ━━━━")
     if vaz:
         for v in vaz:
             contas = f"{v.get('contas',0):,}".replace(",",".")
             out.append(f"🔴 *{v['nome']}* ({v['data']}) — {contas} contas")
-            out.append(f"   Dados: _{v['dados']}_")
+            out.append(f"   _{v['dados']}_")
     else:
         out.append("✅ Nenhum vazamento encontrado")
 
-    out.append(f"\n━━━━━━━━━━━━━━━━━━━━━━")
-    out.append("🔴 _RedNova OSINT · BrasilAPI · crt.sh · HIBP · DNS · Scraping público_")
-
+    out.append("\n━━━━━━━━━━━━━━━━━━━━━━")
+    out.append("🔴 _RedNova · BrasilAPI · registro.br · crt.sh · HIBP · DuckDuckGo_")
     return "\n".join(out)
