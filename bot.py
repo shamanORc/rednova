@@ -4,7 +4,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (Application, CommandHandler, MessageHandler,
                            CallbackQueryHandler, ContextTypes, filters)
 from telegram.constants import ParseMode
-import osint_cnpj, osint_dominio, osint_telefone, osint_publico, ai_brain, agenda
+import osint_cnpj, osint_dominio, osint_telefone, osint_publico, ai_brain, agenda, gerar_pdf
 
 TOKEN    = os.environ.get("BOT_TOKEN", "")
 OWNER_ID = int(os.environ.get("OWNER_ID", "0"))
@@ -22,6 +22,7 @@ def menu_keyboard():
         [InlineKeyboardButton("🔍 OSINT", callback_data="menu_osint")],
         [InlineKeyboardButton("🛡️ Scan de Segurança", callback_data="menu_scan")],
         [InlineKeyboardButton("📋 Contratos / Agenda", callback_data="menu_agenda")],
+        [InlineKeyboardButton("📄 Gerar PDF do último OSINT", callback_data="menu_pdf")],
     ])
 
 def osint_keyboard():
@@ -74,6 +75,12 @@ async def button(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     elif data == "menu_scan":
         ctx.user_data["aguardando"] = "scan"
         await q.edit_message_text("🛡️ *Scan*\n\nEnvia o domínio alvo:", parse_mode=ParseMode.MARKDOWN)
+    elif data == "menu_pdf":
+        ctx.user_data["aguardando"] = "pdf_alvo"
+        await q.edit_message_text(
+            "📄 *Gerar PDF*\n\nEnvia o domínio ou CNPJ para gerar o relatório:",
+            parse_mode=ParseMode.MARKDOWN)
+
     elif data == "menu_agenda":
         texto = agenda.listar()
         await q.edit_message_text(texto, parse_mode=ParseMode.MARKDOWN,
@@ -181,6 +188,10 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
         ctx.user_data["aguardando"] = None
         await handle_scan(update, ctx, texto)
         return
+    elif aguardando == "pdf_alvo":
+        ctx.user_data["aguardando"] = None
+        await handle_pdf(update, ctx, texto)
+        return
     elif aguardando == "agenda_novo":
         ctx.user_data["aguardando"] = None
         resp = agenda.adicionar(texto)
@@ -219,6 +230,37 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                                          disable_web_page_preview=True)
     except Exception:
         await update.message.reply_text(resposta, disable_web_page_preview=True)
+
+
+async def handle_pdf(update: Update, ctx, entrada: str):
+    msg = await update.message.reply_text("📄 Gerando PDF...")
+    try:
+        digits = re.sub(r"\D","",entrada)
+        if len(digits) == 14:
+            dados = await asyncio.to_thread(osint_publico.osint_completo, digits, None, None)
+        else:
+            dom = entrada.replace("https://","").replace("http://","").strip("/")
+            dados = await asyncio.to_thread(osint_publico.osint_completo, None, dom, None)
+        
+        # Converter string formatada de volta pra dict básico para o PDF
+        dados_dict = {"dominio": entrada, "empresa": {}, "emails": [],
+                      "redes": {}, "vazamentos": [], "ips": [], "registro_br": {}}
+        
+        caminho = await asyncio.to_thread(gerar_pdf.pdf_do_osint, dados_dict, entrada)
+        if caminho and os.path.exists(caminho):
+            await msg.delete()
+            with open(caminho, "rb") as f:
+                await update.message.reply_document(
+                    document=f,
+                    filename=f"RedNova_{entrada}.pdf",
+                    caption="📄 Relatório RedNova"
+                )
+            os.remove(caminho)
+        else:
+            await msg.edit_text("❌ Erro ao gerar PDF. Verifica se reportlab está instalado.",
+                                reply_markup=menu_keyboard())
+    except Exception as ex:
+        await msg.edit_text(f"Erro PDF: {ex}", reply_markup=menu_keyboard())
 
 # Comandos diretos
 async def cmd_menu(update, ctx):

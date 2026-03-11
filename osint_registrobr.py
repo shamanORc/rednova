@@ -157,10 +157,15 @@ def cruzar_dono(nome):
     nome_enc = urllib.parse.quote(f'"{nome}"')
 
     # DuckDuckGo dork para cada rede
+    # Usar primeiro + último nome para busca mais precisa
+    partes_nome = nome.split()
+    nome_curto = partes_nome[0] + " " + partes_nome[-1] if len(partes_nome) > 1 else nome
+    nome_curto_enc = urllib.parse.quote(f'"{nome_curto}"')
+
     buscas = {
-        "linkedin":  f"{nome_enc} site:linkedin.com/in",
-        "instagram": f"{nome_enc} site:instagram.com",
-        "facebook":  f"{nome_enc} site:facebook.com",
+        "linkedin":  f"{nome_curto_enc} site:linkedin.com/in",
+        "instagram": f"{nome_curto_enc} site:instagram.com",
+        "facebook":  f"{nome_curto_enc} site:facebook.com",
         "jusbrasil": f"{nome_enc} site:jusbrasil.com.br",
         "escavador":  f"{nome_enc} site:escavador.com",
     }
@@ -168,7 +173,7 @@ def cruzar_dono(nome):
     pats = {
         "linkedin":  r'linkedin\.com/in/([A-Za-z0-9\-_\.]{2,60})',
         "instagram": r'instagram\.com/([A-Za-z0-9\._]{2,40})(?:/|\b)',
-        "facebook":  r'facebook\.com/(?!sharer|share|groups|events|pages/create)([A-Za-z0-9\._/\-]{2,80})',
+        "facebook":  r'facebook\.com/(?!sharer|share|groups|events|pages/create|tr|plugins|dialog|login|legal|privacy|photo|video|watch)([A-Za-z0-9\._\-]{4,50})',
         "jusbrasil": r'jusbrasil\.com\.br/(?:artigos|noticias|jurisprudencia|diarios|processos)/[^\s"<>]{5,100}',
         "escavador":  r'escavador\.com/sobre/[^\s"<>]{5,80}',
     }
