@@ -1,3 +1,8 @@
-python-telegram-bot==21.9
-httpx==0.27.0
-reportlab==4.1.0
+requests
+beautifulsoup4
+python-telegram-bot
+networkx
+fpdf
+whois
+flask
+pandas
