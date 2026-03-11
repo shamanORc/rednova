@@ -1,8 +1,0 @@
-requests
-beautifulsoup4
-python-telegram-bot
-networkx
-fpdf
-whois
-flask
-pandas
