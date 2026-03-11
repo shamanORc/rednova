@@ -5,7 +5,7 @@ O cérebro conversacional do bot.
 
 import os, json, urllib.request, urllib.error
 
-GROK_API_KEY = os.environ.get("GROK_API_KEY", "")
+GROK_API_KEY = os.environ.get("xai-aPBFK95nBdUaaHrbwwWqx6eP5PhZm6gTidM7xgvRFJtf3z4thlnP1eDeqCy1dDOGkDB9hNAmhUZel2NQ", "")
 GROK_URL     = "https://api.x.ai/v1/chat/completions"
 MODEL        = "grok-3-mini"
 
@@ -47,8 +47,8 @@ MAX_HISTORICO = 20
 def chat(mensagem, contexto_extra=None):
     global _historico
 
-    if not GROK_API_KEY:
-        return "GROK_API_KEY nao configurada. Adiciona no Render.com como variavel de ambiente."
+    if not GROK_API_KEY:xai-aPBFK95nBdUaaHrbwwWqx6eP5PhZm6gTidM7xgvRFJtf3z4thlnP1eDeqCy1dDOGkDB9hNAmhUZel2NQ
+        return "xai-aPBFK95nBdUaaHrbwwWqx6eP5PhZm6gTidM7xgvRFJtf3z4thlnP1eDeqCy1dDOGkDB9hNAmhUZel2NQ."
 
     _historico.append({"role": "user", "content": mensagem})
     if len(_historico) > MAX_HISTORICO:
