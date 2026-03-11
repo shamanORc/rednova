@@ -15,12 +15,12 @@ from telegram.constants import ParseMode
 
 import osint_cnpj, osint_dominio, osint_telefone, osint_publico, ai_brain
 
-TOKEN    = os.environ.get("BOT_TOKEN", "SEU_TOKEN_AQUI")
-OWNER_ID = int(os.environ.get("OWNER_ID", "0"))  # Seu Telegram ID
+TOKEN    = os.environ.get("8275943576:AAGT_d2px_-VrWUimwkGqilBZ9KTCb5y_zo")
+OWNER_ID = int(os.environ.get("1006403873", "0"))  # Seu Telegram ID
 
 # ── Segurança: só você usa ───────────────────────────────────────
 async def check_owner(update: Update) -> bool:
-    if update.effective_user.id != OWNER_ID:
+    if update.effective_user.id != OWNER_ID:1006403873
         await update.message.reply_text("⛔ Acesso negado.")
         return False
     return True
