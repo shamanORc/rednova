@@ -1,8 +1,7 @@
 {
- "routes": [
-   {
-     "src": "/(.*)",
-     "dest": "api/app.py"
-   }
- ]
+  "functions": {
+    "api/index.py": {
+      "runtime": "python3.9"
+    }
+  }
 }
