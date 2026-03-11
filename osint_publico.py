@@ -378,14 +378,23 @@ def osint_completo(cnpj_raw=None, dominio_raw=None, nome_raw=None):
     nome_empresa = (dados["empresa"].get("nome_fantasia") or
                     dados["empresa"].get("razao_social") or nome_raw or "")
 
-    # 2. Registro.br + WHOIS
+    # 2. Registro.br via RDAP oficial
+    dados["registro_br"] = {}
+    dados["dono_nome"] = None
+    dados["dono_redes"] = {}
     if dominio:
-        dados["registro_br"] = _registro_br(dominio)
-        # Pegar emails/phones do whois
-        for e in dados["registro_br"].get("emails",[]):
-            dados["emails"].append(e)
-        for p in dados["registro_br"].get("phones",[]):
-            dados["phones"].append(p)
+        try:
+            from osint_registrobr import consultar_dominio, cruzar_dono
+            reg = consultar_dominio(dominio)
+            dados["registro_br"] = reg
+            for e in reg.get("emails",[]): dados["emails"].append(e)
+            for p in reg.get("telefones",[]): dados["phones"].append(p)
+            dono_nome = reg.get("dono_nome")
+            if dono_nome:
+                dados["dono_nome"] = dono_nome
+                dados["dono_redes"] = cruzar_dono(dono_nome)
+        except Exception as ex:
+            pass
 
     # 3. Subdomínios
     if dominio:
@@ -491,12 +500,20 @@ def _formatar(d):
     if dom:
         out.append(f"\n━━━━ 🌐 DOMÍNIO: `{dom}` ━━━━")
         reg = d.get("registro_br",{})
-        if reg.get("owner"):
-            out.append(f"*Dono (registro.br):* {reg['owner']}")
-        if reg.get("contatos"):
-            out.append(f"*Contatos:* {' | '.join(reg['contatos'][:3])}")
-        if reg.get("created"):
-            out.append(f"*Criado:* {reg['created']}")
+        if reg.get("dono_nome"):
+            out.append(f"*Registrante:* {reg['dono_nome']}")
+        if reg.get("nic_hdl"):
+            out.append(f"*NIC-BR:* `{reg['nic_hdl']}`")
+        if reg.get("criado"):
+            out.append(f"*Criado:* {reg['criado']} | *Expira:* {reg.get('expira','?')}")
+        if reg.get("nameservers"):
+            out.append(f"*NS:* {' | '.join(reg['nameservers'][:2])}")
+        if reg.get("emails"):
+            for em in reg["emails"][:2]:
+                out.append(f"*Email reg:* `{em}`")
+        if reg.get("telefones"):
+            for t in reg["telefones"][:2]:
+                out.append(f"*Tel reg:* `{t}`")
         ips_unicos = list({x["ip"]: x for x in d.get("ips",[])}.values())
         if ips_unicos:
             ips_txt = " | ".join("`" + x["ip"] + "`" for x in ips_unicos[:3])
@@ -506,6 +523,24 @@ def _formatar(d):
             out.append(f"*Subdomínios ({len(subs)}):* " +
                        " | ".join(f"`{s}`" for s in subs[:5]) +
                        (f" _+{len(subs)-5} mais_" if len(subs)>5 else ""))
+
+    # Dono nas redes sociais
+    dono_nome = d.get("dono_nome")
+    dono_redes = d.get("dono_redes",{})
+    if dono_nome:
+        out.append(f"\n━━━━ 👤 DONO DO DOMÍNIO ━━━━")
+        out.append(f"*Nome:* {dono_nome}")
+        icons_r = {"linkedin":"💼","instagram":"📸","facebook":"🔵",
+                   "jusbrasil":"⚖️","escavador":"🔎"}
+        if dono_redes:
+            for rede, url in dono_redes.items():
+                if rede == "emails_encontrados":
+                    for e in url[:2]:
+                        out.append(f"  📧 `{e}`")
+                else:
+                    out.append(f"  {icons_r.get(rede,'•')} [{rede.capitalize()}]({url})")
+        else:
+            out.append("  _Buscando nas redes..._")
 
     # Emails
     emails = d.get("emails",[])
