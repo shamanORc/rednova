@@ -54,27 +54,30 @@ QUANDO RECEBER DADOS DE INVESTIGAÇÃO:
 
 def ai_chat(mensagem, contexto=""):
     if not GROQ_API_KEY:
-        return "⚠️ GROQ_API_KEY não configurada."
+        return "⚠️ GROQ_API_KEY não configurada no Railway."
     _historico.append({"role":"user","content":mensagem})
     if len(_historico) > 20: _historico[:] = _historico[-20:]
     msgs = [{"role":"system","content":SYSTEM_PROMPT}]
     if contexto:
-        msgs.append({"role":"system","content":f"Contexto da investigação:\n{contexto[:2000]}"})
+        msgs.append({"role":"system","content":f"Contexto:\n{contexto[:2000]}"})
     msgs.extend(_historico)
-    import json as _json
-    payload = _json.dumps({"model":GROQ_MODEL,"messages":msgs,"max_tokens":800,"temperature":0.7}).encode()
     try:
-        import ssl, urllib.request
-        ctx = ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=__import__('ssl').CERT_NONE
-        req = urllib.request.Request(GROQ_URL, data=payload,
-              headers={"Content-Type":"application/json","Authorization":f"Bearer {GROQ_API_KEY}"}, method="POST")
-        with urllib.request.urlopen(req, timeout=30, context=ctx) as r:
-            data = _json.loads(r.read())
-        resp = data["choices"][0]["message"]["content"]
-        _historico.append({"role":"assistant","content":resp})
-        return resp
+        import httpx, json as _json
+        payload = {"model":GROQ_MODEL,"messages":msgs,"max_tokens":800,"temperature":0.7}
+        resp = httpx.post(
+            GROQ_URL,
+            json=payload,
+            headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+            timeout=30
+        )
+        data = resp.json()
+        if resp.status_code != 200:
+            return f"⚠️ Groq erro {resp.status_code}: {data.get('error',{}).get('message','?')[:100]}"
+        texto = data["choices"][0]["message"]["content"]
+        _historico.append({"role":"assistant","content":texto})
+        return texto
     except Exception as e:
-        return f"Erro IA: {str(e)[:100]}"
+        return f"⚠️ Erro IA: {str(e)[:150]}"
 
 # ── FORMATAÇÃO DO RESULTADO ───────────────────────────────────────────────
 def formatar_resultado(results: dict) -> list:
