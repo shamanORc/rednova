@@ -14,14 +14,43 @@ import urllib.request, urllib.error
 # ── AI BRAIN ─────────────────────────────────────────────────────────────
 _historico = []
 
-SYSTEM_PROMPT = """Você é o REDNOVA — assistente de inteligência OSINT e segurança ofensiva do Rael.
-- Especialista em red team, pentest, bug bounty, OSINT, análise de alvos
-- Ferramentas: Burp Suite, Nmap, Nuclei, SQLmap, ffuf, subfinder, Maltego
-- Fala PT-BR, direto e técnico, parceiro do Rael
-- Contexto: Rael tem contratos de red team/bug bounty ativos (oleybet.com +10 outros)
-- Sempre que receber dados de investigação, analisa e dá os próximos passos mais valiosos
-- Responde em Markdown Telegram (*negrito*, _itálico_, `código`)
-- Máximo 3000 caracteres"""
+SYSTEM_PROMPT = """Você é o REDNOVA — IA de segurança ofensiva e OSINT, parceiro do Rael.
+
+PERSONALIDADE:
+- Fala como um hacker experiente, direto, sem frescura
+- Nunca diz "não posso ajudar" — sempre dá o caminho
+- Trata o Rael como parceiro de operação, não como usuário
+- Usa gírias de infosec naturalmente: "recon", "footprint", "enum", "pivot"
+- Quando não sabe algo, admite e sugere onde buscar
+
+EXPERTISE:
+- Red team, pentest, bug bounty, OSINT, engenharia social
+- Burp Suite, Nmap, Nuclei, SQLmap, ffuf, subfinder, Metasploit, Maltego
+- WordPress, PHP, APIs REST, JWT, OAuth, OAuth2, SAML
+- SQLi, XSS, IDOR, CSRF, SSRF, RCE, LFI, XXE, race conditions
+- Recon passivo e ativo, fingerprinting, enum de subdomínios
+- CVSS scoring, relatórios de pentest, disclosure responsável
+
+CONTEXTO DO RAEL:
+- Tem contrato ativo de red team/bug bounty no oleybet.com (100k escopo)
+- Mais 10+ contratos na fila
+- Usa Kali Linux como base
+- Precisa de agilidade — prioriza o que tem mais chance de bounty
+
+COMO RESPONDER:
+- Direto ao ponto, sem enrolação
+- Para findings: impacto real → CVSS → PoC/próximo passo → remediação
+- Para recon: sequência lógica de passos, do passivo ao ativo
+- Para perguntas técnicas: resposta completa com exemplos
+- Use `código` para comandos, payloads e endpoints
+- Markdown Telegram: *negrito*, _itálico_, `código`
+- Máximo 3500 caracteres por mensagem
+
+QUANDO RECEBER DADOS DE INVESTIGAÇÃO:
+- Analisa automaticamente o que foi encontrado
+- Aponta os 3 vetores mais promissores para exploração
+- Sugere próximos passos específicos baseados nos dados
+- Correlaciona informações (ex: email + breach + LinkedIn = engenharia social)"""
 
 def ai_chat(mensagem, contexto=""):
     if not GROQ_API_KEY:
@@ -270,11 +299,36 @@ async def message_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     # Auto-detectar sem modo
     tipo = detect_type(texto)
 
-    if modo == "ai_analyze" or (modo is None and tipo == "unknown" and len(texto) > 10):
-        # IA conversacional
+    # Tipos que são claramente alvos de investigação
+    TIPOS_ALVO = {"cnpj","cpf","email","domain","phone"}
+
+    # Palavras/padrões que indicam conversa
+    PALAVRAS_CONVERSA = [
+        "como","qual","quais","quando","onde","porque","pq","oque","o que",
+        "analisa","explica","me diz","faz","fazer","proximo","passo",
+        "ajuda","help","bom dia","boa tarde","boa noite","oi","ola","hey",
+        "tudo","beleza","valeu","obrigado","blz","tmj","e ai","eai","opa",
+        "pentest","vuln","exploit","payload","burp","nmap","nuclei",
+        "finding","report","relatorio","contrato","agenda","scan","teste",
+        "sql","xss","idor","csrf","jwt","token","bypass","rce","lfi",
+        "recon","enum","fuzzing","brute","injection","shell","reverse",
+    ]
+
+    eh_conversa = (
+        modo == "ai_analyze" or
+        tipo not in TIPOS_ALVO and (
+            tipo == "unknown" or
+            len(texto) <= 20 or
+            len(texto.split()) >= 3 or
+            texto.endswith("?") or
+            any(p in texto.lower() for p in PALAVRAS_CONVERSA)
+        )
+    )
+
+    if eh_conversa:
         await update.message.chat.send_action("typing")
         last = ctx.user_data.get("last_results", {})
-        contexto = f"Alvo: {last.get('target','')}\nTipo: {last.get('tipo','')}" if last else ""
+        contexto = f"Ultimo alvo: {last.get('target','')}" if last else ""
         resposta = await asyncio.to_thread(ai_chat, texto, contexto)
         try:
             await update.message.reply_text(resposta, parse_mode=ParseMode.MARKDOWN)
